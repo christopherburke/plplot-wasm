@@ -1,0 +1,260 @@
+First step get plplot library to compile with emscripten.
+I'm going to do normal compile process without emscripten just to make sure that seems to work.
+
+/Users/cjburke/Work/plplot/plplot-5.15.0
+instructions here
+https://sourceforge.net/p/plplot/wiki/Building_PLplot/
+
+mkdir local
+
+cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/Users/cjburke/Work/plplot/plplot-5.15.0/local -DBUILD_SHARED_LIBS=OFF -DENABLE_DYNDRIVERS=OFF -DDEFAULT_NO_BINDINGS=ON -DDEFAULT_NO_DEVICES=ON -DPLD_memcairo=ON -DPLD_pngcairo=ON -DCMAKE_BUILD_TYPE=RELEASE
+
+cd build
+make
+
+library located in build/src
+
+
+Now for emscripten
+/Users/cjburke/Work/emsdk/upstream/emscripten/emcmake cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/Users/cjburke/Work/plplot/plplot-5.15.0/local -DBUILD_SHARED_LIBS=OFF -DENABLE_DYNDRIVERS=OFF -DDEFAULT_NO_BINDINGS=ON -DDEFAULT_NO_DEVICES=ON -DPLD_memcairo=ON -DPLD_pngcairo=ON -DCMAKE_BUILD_TYPE=RELEASE
+
+Failed due to looking for a math library.
+In plplot-5.15.0/cmake/modules/plplot.cmake
+it mentions that for windows and cygwin that math library is not separate, so only look for math library if non-windows. I am guessing that emscripten also does not have a separate math library?? So, I altered the cmake to also skip the looking for math library if EMSCRIPTEN is set in addition to the WIN32_OR_CYGWIN variable.
+
+This worked to at least complete the configure stage.
+However, now it is complaining about missing pango, cairo, and gsastime
+
+Starting with cairo-1.16.0
+Had issues with quartz library
+./configure --prefix=/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot --enable-shared=no --enable-static=yes --enable-quartz=no --enable-quartz-font=no --enable-quartz-image=no
+
+This seemed to work.
+All right now try emscripten
+/Users/cjburke/Work/emsdk/upstream/emscripten/emconfigure ./configure --prefix=/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot --enable-shared=no --enable-static=yes --enable-quartz=no --enable-quartz-font=no --enable-quartz-image=no
+
+This fails on needing libpng, so going to get that
+
+libpng-1.6.37
+cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot -DPNG_HARDWARE_OPTIMIZATIONS=OFF
+
+libpng will need zlib, so doing that now
+
+zlib-1.2.12
+cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot
+
+That worked now trying emcmake
+/Users/cjburke/Work/emsdk/upstream/emscripten/emcmake cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot
+cd build
+/Users/cjburke/Work/emsdk/upstream/emscripten/emmake make
+make install
+
+Crossing fingers having libz.a in sysroot/lib will work to be found!!
+emcmake did appear to be able to find the wasm version of zlib
+
+libpng-1.6.37
+/Users/cjburke/Work/emsdk/upstream/emscripten/emcmake cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot -DPNG_HARDWARE_OPTIMIZATIONS=OFF -DPNG_SHARED=OFF -DPNG_STATIC=ON
+
+**Needed to alter CMakeLists.txt to add 'AND NOT EMSCRIPTEN' to the M_LIBRARY search
+
+cd build
+/Users/cjburke/Work/emsdk/upstream/emscripten/emmake make
+make install
+
+Got back to cairo
+complained about not finding png library tried this
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot/lib
+
+didn't work
+
+tried this
+export LDFLAGS=/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot/lib
+
+unsure if that was needed because then I ran across doing the next thing
+
+**For some reason this was needed even though it seems like it was available
+export png_REQUIRES="libpng"
+from https://stackoverflow.com/questions/2933242/cairo-could-not-find-libpng-in-the-pkg-config-search-path
+
+/Users/cjburke/Work/emsdk/upstream/emscripten/emconfigure ./configure --prefix=/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot --enable-shared=no --enable-static=yes --enable-quartz=no --enable-quartz-font=no --enable-quartz-image=no --enable-png=yes
+
+that seems to work but now complaining about missing pixmon
+
+pixman-0.40.0
+/Users/cjburke/Work/emsdk/upstream/emscripten/emconfigure ./configure --prefix=/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot
+
+/Users/cjburke/Work/emsdk/upstream/emscripten/emmake make
+
+make install
+
+Going back to cairo
+/Users/cjburke/Work/emsdk/upstream/emscripten/emconfigure ./configure --prefix=/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot --enable-shared=no --enable-static=yes --enable-quartz=no --enable-quartz-font=no --enable-quartz-image=no --enable-png=yes
+
+Worked!
+
+/Users/cjburke/Work/emsdk/upstream/emscripten/emmake make
+
+Errored with a thread issue MUTEX warning
+Edited src/cairo-mutex-impl-private.h
+Ln 159 #define CAIRO_NO_MUTEX 1
+
+That seemed to work then while making complaints related to xlib going to disable it in configure
+
+/Users/cjburke/Work/emsdk/upstream/emscripten/emconfigure ./configure --prefix=/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot --enable-shared=no --enable-static=yes --enable-quartz=no --enable-quartz-font=no --enable-quartz-image=no --enable-png=yes --enable-xlib=no --enable-xlib-xrender=no --enable-xlib-xcb=no
+
+In the make is errors out on compiling the testing routines. It complains about missing symbols which I believe are coming from FreeType font library. I think the cairo library actually got made. 
+make install puts in libcairo.a
+
+Assume for now that it worked.
+
+Lets go back to plplot
+/Users/cjburke/Work/emsdk/upstream/emscripten/emcmake cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/Users/cjburke/Work/plplot/plplot-5.15.0/local -DBUILD_SHARED_LIBS=OFF -DENABLE_DYNDRIVERS=OFF -DDEFAULT_NO_BINDINGS=ON -DDEFAULT_NO_DEVICES=ON -DPLD_memcairo=ON -DPLD_pngcairo=ON -DCMAKE_BUILD_TYPE=RELEASE -DCMAKE_LIBRARY_PATH=/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot/lib -DCMAKE_INCLUDE_PATH=/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot/include -DQHULL_LIBRARIES=/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot/lib
+
+Not working lets look at installing pango?
+Ouch!!!
+
+fribidi-1.0.12
+/Users/cjburke/Work/emsdk/upstream/emscripten/emconfigure ./configure --prefix=/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot --enable-shared=false
+
+/Users/cjburke/Work/emsdk/upstream/emscripten/emmake make
+
+This seemed to work
+
+Looks like harfbuzz and freetype are circular dependent.
+Thus install freetype without harfbuzz, then install harfbuzz, then redo freetype enabling harfbuzz
+
+freetype-2.12.1
+Needs bzip2
+
+bzip2
+/Users/cjburke/Work/emsdk/upstream/emscripten/emmake make
+make install PREFIX=/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot
+
+back to freetype
+
+/Users/cjburke/Work/emsdk/upstream/emscripten/emconfigure ./configure --prefix=/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot --enable-shared=false --with-harfbuzz=no --with-brotli==no
+
+Not picking up bzip2 library try the cmake version
+/Users/cjburke/Work/emsdk/upstream/emscripten/emcmake cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=false -DFT_REQUIRE_ZLIB=ON -DFT_REQUIRE_BZIP2=ON -DFT_REQUIRE_PNG=ON -DFT_DISABLE_HARFBUZZ=ON -DFT_DISABLE_BROTLI=ON
+
+That seemed to work better, although it still complained something about bzip2 try to make
+cd build
+/Users/cjburke/Work/emsdk/upstream/emscripten/emmake make
+make install
+
+Now go back to harfbuzz
+/Users/cjburke/Work/emsdk/upstream/emscripten/emcmake cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=false -DHB_HAVE_FREETYPE=ON
+cd build
+/Users/cjburke/Work/emsdk/upstream/emscripten/emmake make
+make install
+
+Go back to freetype to include harfbuzz in it
+originally had issues with missing header needed to add -DHB_HAVE_FREETYPE=ON to cmake
+
+/Users/cjburke/Work/emsdk/upstream/emscripten/emcmake cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=false -DFT_REQUIRE_ZLIB=ON -DFT_REQUIRE_BZIP2=ON -DFT_REQUIRE_PNG=ON -DFT_REQUIRE_HARFBUZZ=ON -DFT_DISABLE_BROTLI=ON
+
+
+
+fontconfig-2.14.0
+/Users/cjburke/Work/emsdk/upstream/emscripten/emconfigure ./configure --prefix=/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot --enable-shared=no --enable-static=yes
+
+Was complaining about missing zlib. the configure uses pkg-config to find the library.pc meta data files which describe where libraries and include directories are. zlib put it in sysroot/share/pkgconfig
+Whereas emconfigure seems to use sysroot/lib/pkgconfig to store the meta data .pc files. I copied the zlib.pc sysroot/share/pkgconfig to sysroot/lib/pkgconfig and it stopped complaining about missing zlib.
+Now it needs to find harfbuzz
+/Users/cjburke/Work/emsdk/upstream/emscripten/emconfigure pkg-config --list-all
+shows all the libaries emconfigure knows about
+
+Go back to harfbuzz and using configure method as I think the cmake is forgetting the harfbuzz.pc file
+/Users/cjburke/Work/emsdk/upstream/emscripten/emconfigure ./configure --prefix=/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot --enable-shared=no --enable-static=yes
+
+That seemed to do the trick to make the harfbuzz.pc
+
+go back to fontconfig it now complains about needing expat library
+sigh
+
+expat-2.4.8
+/Users/cjburke/Work/emsdk/upstream/emscripten/emconfigure ./configure --prefix=/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot --enable-shared=no --enable-static=yes
+
+fontconfig
+
+fc-cache program fails to build for missing symbols that are clearly in libbz2.a ? It seems library gets compiled and installed
+
+
+qhull-2020.2
+/Users/cjburke/Work/emsdk/upstream/emscripten/emcmake cmake -S . -B build_qhull -DCMAKE_INSTALL_PREFIX=/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=false
+
+cd build_qhull
+/Users/cjburke/Work/emsdk/upstream/emscripten/emmake make
+make install
+
+pango
+uses meson build system
+Some emscripten support is supposedly available with cross compilation
+https://mesonbuild.com/Cross-compilation.html
+gonna try an emscripten.txt file like as from
+https://github.com/prozum/meson-samples/blob/master/emscripten.txt
+
+
+All right let's try to tackle glib start with trying to turn off as much as possible and see if that will work. Glib uses meson.
+glib-2.69.3
+Some building instructions
+https://docs.gtk.org/glib/building.html
+
+meson setup --buildtype release -Dgtk_doc=false -Dman=false -Dxattr=false -Dselinux=disabled -Ddtrace=false -Dsystemtap=false -Db_coverage=false -Dlibmount=disabled -Dsysprof=disabled -Dfam=false -Dtests=false -Dinstalled_tests=false -Dnls=disabled -Dlibelf=disabled --cross-file emscripten.txt build-emscripten
+
+
+That's not going to work. same wchar_t complaint as pango trying to compile glib
+
+Here's a thread that asks about glib and emscripten
+https://github.com/emscripten-core/emscripten/issues/11066
+This post on above thread appears to have solutions
+
+https://gist.github.com/kleisauke/acfa1c09522705efa5eb0541d2d00887
+That was impressive. It used a linux based docker with emscripten and did all the patches necessary to compile glib!!!
+
+Go back to pango
+Having trouble finding packages had to 
+export PKG_CONFIG=/opt/homebrew/bin/pkg-config
+also started using cross compile emscripten.txt based on the one from glib
+meson setup --default-library='static' --cross-file emscripten.txt build-emscript --prefix=/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot
+
+This worked!!
+Now try to build the damn thing
+doesn't work
+
+go back to harfbuzz
+/Users/cjburke/Work/emsdk/upstream/emscripten/emcmake cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=false -DHB_HAVE_FREETYPE=ON -DHB_HAVE_GOBJECT=ON -DGLIBCONFIG_INCLUDE_DIR=/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot/lib/glib-2.0/include
+
+cd build
+/Users/cjburke/Work/emsdk/upstream/emscripten/emmake make
+make install
+
+Lets try harfbuzz meson build the gobject isn't building either
+meson setup --default-library='static' --cross-file emscripten.txt build-emscript --prefix=/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot -Dtests=disabled -Ddocs=disabled 
+
+***Had to remove utils directory from being built in meson.build
+This seems to install library and skip the problem utilities.
+
+pangocairo-font.c comment out line 171****
+Unsure what that will do long term. Really unsure why the cairo.h file included at the top didn't fix this**
+cairo_user_font_face_set_render_color_glyph_func
+DOESNT exist in cairo code but
+cairo_user_font_face_set_render_glyph_func
+DOES  MiSSING color
+meson setup --default-library='static' --cross-file emscripten.txt build-emscript --prefix=/Users/cjburke/Work/emsdk/upstream/emscripten/cache/sysroot
+
+Turns out pango-1.90 may be unstable break things
+so going to try pango-1.50.9
+
+In meson.build comment out all subdir except for pango no tools tests, etc.
+
+PLPLOT much happier with pango!!
+Using
+/Users/cjburke/Work/emsdk/upstream/emscripten/emcmake cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/Users/cjburke/Work/plplot/plplot-5.15.0/local -DBUILD_SHARED_LIBS=OFF -DENABLE_DYNDRIVERS=OFF -DDEFAULT_NO_BINDINGS=ON -DDEFAULT_NO_DEVICES=ON -DPLD_memcairo=ON -DPLD_pngcairo=ON -DCMAKE_BUILD_TYPE=RELEASE -DHAVE_QHULL=ON -DWITH_CSA=OFF -DCMAKE_CROSSCOMPILING=ON
+
+Still missing qhull and complaining about some of the things in lib
+I fixed the things in lib
+From reading the CMakeLists.txt in lib one needs to do a native make first to generate some of the cmake files. I also had to move the CMAKE_CROSSCOMPILING if statement higher up before the add_subdirectory.
+
+The CMakeCache file was generated incorrectly for the USE_PTHREADS=1 flag
+There was a semicolon ; between -s;USE_P  Just delete the semicolon for lots of places in the CMakeCace and IT COMPILED !!!!!!!!!
